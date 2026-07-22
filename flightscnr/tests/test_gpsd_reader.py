@@ -78,3 +78,51 @@ class TestApplyGpsdObject(unittest.TestCase):
         self.assertEqual(r.fix, "none")
         self.assertAlmostEqual(r.lat, 47.6)
         self.assertAlmostEqual(r.lon, -122.3)
+
+
+class TestStreamReports(unittest.TestCase):
+    def test_reads_reports_from_a_fake_gpsd(self):
+        import socket
+        import threading
+        import time
+
+        from utilities.gpsd_reader import stream_reports
+
+        # A minimal fake gpsd: accept one client, expect the WATCH line, emit
+        # a SKY then a TPV, then close.
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        port = srv.getsockname()[1]
+
+        def serve():
+            conn, _ = srv.accept()
+            conn.recv(1024)  # consume ?WATCH
+            conn.sendall(b'{"class":"SKY","hdop":1.5,"satellites":[{"PRN":1,"used":true}]}\n')
+            conn.sendall(b'{"class":"TPV","mode":3,"lat":47.6,"lon":-122.3}\n')
+            time.sleep(0.2)
+            conn.close()
+
+        threading.Thread(target=serve, daemon=True).start()
+
+        reports = []
+        states = []
+        stop = threading.Event()
+
+        def on_report(r):
+            reports.append(r)
+            if r.has_fix():
+                stop.set()  # got what we need
+
+        def on_state(s):
+            states.append(s)
+
+        stream_reports("127.0.0.1", port, stop, on_report, on_state, connect_timeout=2.0)
+
+        self.assertIn("present", states)
+        self.assertTrue(any(r.fix == "3d" for r in reports))
+        got = [r for r in reports if r.fix == "3d"][-1]
+        self.assertAlmostEqual(got.lat, 47.6)
+        self.assertEqual(got.sats_used, 1)  # SKY applied before TPV
+        srv.close()

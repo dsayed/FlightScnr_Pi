@@ -9,12 +9,17 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import socket
+import threading  # noqa: F401  (documented dependency for callers)
+import time
 
 from utilities.gps_resolver import GpsReport
 
 logger = logging.getLogger(__name__)
 
 _MODE_TO_FIX = {0: "none", 1: "none", 2: "2d", 3: "3d"}
+
+_WATCH = b'?WATCH={"enable":true,"json":true}\n'
 
 
 def apply_gpsd_object(obj: dict, current: GpsReport) -> GpsReport:
@@ -43,3 +48,54 @@ def apply_gpsd_object(obj: dict, current: GpsReport) -> GpsReport:
             hdop = current.hdop
         return dataclasses.replace(current, hdop=hdop, sats_used=used)
     return current
+
+
+def stream_reports(host, port, stop_event, on_report, on_device_state, connect_timeout=5.0):
+    """Connect to gpsd and stream GpsReports until stop_event is set.
+
+    Reconnects with backoff. on_device_state receives "present" on a live socket
+    and "no_daemon" when gpsd can't be reached.
+    """
+    backoff = 1.0
+    while not stop_event.is_set():
+        sock = None
+        try:
+            sock = socket.create_connection((host, port), timeout=connect_timeout)
+            sock.settimeout(1.0)
+            sock.sendall(_WATCH)
+            on_device_state("present")
+            backoff = 1.0
+            current = GpsReport()
+            buf = b""
+            while not stop_event.is_set():
+                try:
+                    chunk = sock.recv(4096)
+                except socket.timeout:
+                    continue
+                if not chunk:
+                    break  # gpsd closed
+                buf += chunk
+                while b"\n" in buf:
+                    line, buf = buf.split(b"\n", 1)
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        obj = json.loads(line.decode("utf-8", "replace"))
+                    except ValueError:
+                        continue
+                    current = apply_gpsd_object(obj, current)
+                    on_report(current)
+        except OSError as exc:
+            logger.debug("gpsd connect/read failed: %s", exc)
+            on_device_state("no_daemon")
+        finally:
+            if sock is not None:
+                try:
+                    sock.close()
+                except OSError:
+                    pass
+        if stop_event.is_set():
+            break
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30.0)
