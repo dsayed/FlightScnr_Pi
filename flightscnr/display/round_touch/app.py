@@ -107,6 +107,13 @@ class RoundTouchDisplay:
         except Exception:
             logger.debug("AIS client startup sync skipped", exc_info=True)
 
+        try:
+            from utilities.gps_client import start_gps
+
+            start_gps()
+        except Exception:
+            logger.debug("GPS client startup skipped", exc_info=True)
+
         self.input = input_handler.TouchInput()
         self.pinch = pinch_handler.PinchZoom()
         self.gestures = gesture_handler.RadarGestureHandler(self.input, self.pinch)
