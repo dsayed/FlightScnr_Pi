@@ -79,6 +79,23 @@ class TestApplyGpsdObject(unittest.TestCase):
         self.assertAlmostEqual(r.lat, 47.6)
         self.assertAlmostEqual(r.lon, -122.3)
 
+    def test_sky_uses_usat_count_when_no_satellite_array(self):
+        from utilities.gpsd_reader import apply_gpsd_object
+
+        # Terse gpsd SKY: DOP values + uSat, no per-satellite array.
+        r = apply_gpsd_object({"class": "SKY", "hdop": 2.5, "uSat": 7}, self._empty())
+        self.assertEqual(r.sats_used, 7)
+        self.assertAlmostEqual(r.hdop, 2.5)
+
+    def test_sky_dop_only_keeps_prior_sats_count(self):
+        from utilities.gpsd_reader import apply_gpsd_object
+        from utilities.gps_resolver import GpsReport
+
+        prior = GpsReport(fix="3d", lat=47.6, lon=-122.3, sats_used=8, hdop=1.1)
+        # A DOP-only SKY (no uSat, no satellites) must NOT reset the used count.
+        r = apply_gpsd_object({"class": "SKY", "hdop": 2.0}, prior)
+        self.assertEqual(r.sats_used, 8)
+
 
 class TestStreamReports(unittest.TestCase):
     def test_reads_reports_from_a_fake_gpsd(self):

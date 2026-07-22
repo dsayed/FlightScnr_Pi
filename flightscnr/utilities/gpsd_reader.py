@@ -38,13 +38,23 @@ def apply_gpsd_object(obj: dict, current: GpsReport) -> GpsReport:
                 updated.speed_mps = None
         return updated
     if cls == "SKY":
-        sats = obj.get("satellites") or []
-        used = sum(1 for s in sats if s.get("used"))
         hdop = obj.get("hdop")
         try:
             hdop = float(hdop) if hdop is not None else current.hdop
         except (TypeError, ValueError):
             hdop = current.hdop
+        # gpsd interleaves full SKY (per-satellite array) with terse DOP-only SKY
+        # that carries just uSat. Prefer uSat; fall back to counting used sats;
+        # keep the prior count when a message has neither (never reset to 0).
+        if "uSat" in obj:
+            try:
+                used = int(obj["uSat"])
+            except (TypeError, ValueError):
+                used = current.sats_used
+        elif obj.get("satellites"):
+            used = sum(1 for s in obj["satellites"] if s.get("used"))
+        else:
+            used = current.sats_used
         return dataclasses.replace(current, hdop=hdop, sats_used=used)
     return current
 
