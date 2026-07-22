@@ -96,6 +96,21 @@ class TestApplyGpsdObject(unittest.TestCase):
         r = apply_gpsd_object({"class": "SKY", "hdop": 2.0}, prior)
         self.assertEqual(r.sats_used, 8)
 
+    def test_tpv_with_null_mode_does_not_crash(self):
+        from utilities.gpsd_reader import apply_gpsd_object
+
+        r = apply_gpsd_object({"class": "TPV", "mode": None}, self._empty())
+        self.assertEqual(r.fix, "none")
+
+    def test_tpv_with_nonnumeric_coords_keeps_prior(self):
+        from utilities.gpsd_reader import apply_gpsd_object
+        from utilities.gps_resolver import GpsReport
+
+        prior = GpsReport(fix="3d", lat=47.6, lon=-122.3, sats_used=7, hdop=1.0)
+        r = apply_gpsd_object({"class": "TPV", "mode": 3, "lat": "bad", "lon": "x"}, prior)
+        self.assertEqual(r.fix, "3d")
+        self.assertAlmostEqual(r.lat, 47.6)
+
 
 class TestStreamReports(unittest.TestCase):
     def test_reads_reports_from_a_fake_gpsd(self):

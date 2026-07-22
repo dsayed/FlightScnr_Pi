@@ -19,15 +19,20 @@ class TestGpsClientDecisions(unittest.TestCase):
 
         d = tempfile.mkdtemp()
         old = config.LOCATION_FILE
+        old_mtime = config._location_file_mtime
         try:
             config.LOCATION_FILE = os.path.join(d, "location.json")
             gc = GpsClient(data_dir=d)
             gc.apply_decision(Decision(action="rehome", lat=47.61, lon=-122.33, source="gps"))
             self.assertTrue(os.path.isfile(config.LOCATION_FILE))
+            # The write is staged for the display's poll, not applied in-process.
+            config._location_file_mtime = None
+            self.assertTrue(config.reload_location_override())
             self.assertAlmostEqual(config.LOCATION_HOME[0], 47.61)
             self.assertEqual(config.location_source(), "gps")
         finally:
             config.LOCATION_FILE = old
+            config._location_file_mtime = old_mtime
 
     def test_status_file_written(self):
         from utilities.gps_client import GpsClient
@@ -77,7 +82,35 @@ class TestGpsClientDecisions(unittest.TestCase):
             gc.start()
             gc._thread.join(timeout=5.0)
             gc.stop()
-            self.assertAlmostEqual(config.LOCATION_HOME[0], 47.6100, places=4)
+            # The re-home is staged to location.json for the display's poll to
+            # pick up (not applied in-process by the GPS client itself).
+            import json
+
+            with open(config.LOCATION_FILE, encoding="utf-8") as fh:
+                staged = json.load(fh)
+            self.assertAlmostEqual(staged["lat"], 47.6100, places=4)
         finally:
             config.LOCATION_FILE = old
             config._location_mode_runtime = old_mode
+
+    def test_rehome_is_detectable_by_display_poll(self):
+        import config
+        from utilities.gps_client import GpsClient
+        from utilities.gps_resolver import Decision
+
+        d = tempfile.mkdtemp()
+        old_file = config.LOCATION_FILE
+        old_mtime = config._location_file_mtime
+        try:
+            config.LOCATION_FILE = os.path.join(d, "location.json")
+            config.set_location_home(47.60, -122.30, source="configured")
+            config._location_file_mtime = os.path.getmtime(config.LOCATION_FILE)
+            gc = GpsClient(data_dir=d)
+            gc.apply_decision(Decision(action="rehome", lat=47.70, lon=-122.20, source="gps"))
+            # The GPS write must be visible to the display's poll so _recenter runs.
+            self.assertTrue(config.reload_location_override())
+            self.assertAlmostEqual(config.LOCATION_HOME[0], 47.70)
+            self.assertEqual(config.location_source(), "gps")
+        finally:
+            config.LOCATION_FILE = old_file
+            config._location_file_mtime = old_mtime

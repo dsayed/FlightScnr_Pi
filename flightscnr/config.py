@@ -200,6 +200,18 @@ def set_location_home(lat: float, lon: float, source: str = "portal"):
         _location_file_mtime = None
 
 
+def stage_location_file(lat: float, lon: float, source: str = "gps") -> None:
+    """Persist a location WITHOUT applying it in-process, so the display's
+    reload_location_override() poll detects the change and runs the full
+    _recenter side effects (AIS resubscribe, timezone/weather refresh).
+
+    Used by the in-process GPS client. Unlike set_location_home(), this does
+    NOT call _apply_home() and does NOT update _location_file_mtime — both of
+    which would suppress the display poll. (set_location_home is for callers
+    that invoke _recenter themselves, e.g. the touch-pan path.)"""
+    _save_location_file(lat, lon, source)
+
+
 def location_mode() -> str:
     return _location_mode_runtime
 

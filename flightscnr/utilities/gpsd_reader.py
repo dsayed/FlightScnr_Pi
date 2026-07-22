@@ -25,12 +25,19 @@ def apply_gpsd_object(obj: dict, current: GpsReport) -> GpsReport:
     """Fold one gpsd JSON object into a new GpsReport (TPV=position, SKY=quality)."""
     cls = obj.get("class")
     if cls == "TPV":
-        fix = _MODE_TO_FIX.get(int(obj.get("mode", 0)), "none")
+        try:
+            mode = int(obj.get("mode", 0))
+        except (TypeError, ValueError):
+            mode = 0
+        fix = _MODE_TO_FIX.get(mode, "none")
         updated = dataclasses.replace(current, fix=fix)
         # Only trust position when there is a fix; on no-fix, keep prior coords.
         if fix != "none" and "lat" in obj and "lon" in obj:
-            updated.lat = float(obj["lat"])
-            updated.lon = float(obj["lon"])
+            try:
+                updated.lat = float(obj["lat"])
+                updated.lon = float(obj["lon"])
+            except (TypeError, ValueError):
+                pass
         if "speed" in obj:
             try:
                 updated.speed_mps = float(obj["speed"])
@@ -93,7 +100,11 @@ def stream_reports(host, port, stop_event, on_report, on_device_state, connect_t
                         obj = json.loads(line.decode("utf-8", "replace"))
                     except ValueError:
                         continue
-                    current = apply_gpsd_object(obj, current)
+                    try:
+                        current = apply_gpsd_object(obj, current)
+                    except Exception:
+                        logger.debug("skipping unparseable gpsd report", exc_info=True)
+                        continue
                     on_report(current)
         except OSError as exc:
             logger.debug("gpsd connect/read failed: %s", exc)

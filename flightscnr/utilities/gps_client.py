@@ -107,7 +107,7 @@ class GpsClient:
     # --- decision application ------------------------------------------------
     def apply_decision(self, decision: Decision) -> None:
         if decision.action in ("rehome", "bootstrap") and decision.lat is not None:
-            config.set_location_home(decision.lat, decision.lon, source=decision.source or "gps")
+            config.stage_location_file(decision.lat, decision.lon, decision.source or "gps")
             with self._lock:
                 self._divergence = {"active": False, "ip_city": None, "ip_lat": None, "ip_lon": None, "km": None}
             logger.info("GPS %s → %.5f, %.5f", decision.action, decision.lat, decision.lon)
