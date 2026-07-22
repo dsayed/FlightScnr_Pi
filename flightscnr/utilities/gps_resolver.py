@@ -42,6 +42,7 @@ class ResolverConfig:
     settle_s: float = 25.0
     nofix_grace_s: float = 180.0
     divergence_km: float = 25.0
+    ip_retry_s: float = 60.0
 
 
 @dataclass
@@ -65,7 +66,7 @@ class LocationResolver:
         self._cluster_since: float | None = None
         self._nofix_since: float | None = None
         self._notice_active = False
-        self._did_ip_check = False
+        self._last_ip_ts: float | None = None
 
     def _accepts(self, r: GpsReport) -> bool:
         return (
@@ -77,32 +78,26 @@ class LocationResolver:
 
     def observe(self, report: GpsReport, now: float, home, mode: str, has_saved_home: bool) -> Decision:
         if mode != "auto":
+            # Reset time-based state so wall-clock spent in manual mode never
+            # counts toward settle/grace windows once the user returns to auto.
+            self._cluster_anchor = None
+            self._cluster_since = None
+            self._nofix_since = None
+            self._last_ip_ts = None
             return Decision(action="none")
 
         if self._accepts(report):
             self._nofix_since = None
-            self._did_ip_check = False
+            self._last_ip_ts = None
             lat, lon = float(report.lat), float(report.lon)
-            # Near current home? nothing to do.
-            if home is not None and haversine_m(lat, lon, home[0], home[1]) <= self._cfg.rehome_min_m:
-                self._cluster_anchor = None
-                self._cluster_since = None
-                return Decision(action="none")
-            # Candidate move: maintain a settle cluster.
-            if (
-                self._cluster_anchor is None
-                or haversine_m(lat, lon, self._cluster_anchor[0], self._cluster_anchor[1]) > self._cfg.rehome_min_m
-            ):
-                self._cluster_anchor = (lat, lon)
-                self._cluster_since = now
-                return Decision(action="none")
-            if self._cluster_since is not None and (now - self._cluster_since) >= self._cfg.settle_s:
-                self._cluster_anchor = None
-                self._cluster_since = None
-                if self._notice_active:
-                    self._notice_active = False
-                return Decision(action="rehome", lat=lat, lon=lon, source="gps")
-            return Decision(action="none")
+            decision = self._observe_accepted(lat, lon, now, home)
+            # A real fix means the "no fix" premise behind any divergence notice
+            # is gone — clear it. A rehome supersedes the notice silently.
+            if self._notice_active:
+                self._notice_active = False
+                if decision.action != "rehome":
+                    return Decision(action="clear_notice")
+            return decision
 
         # No usable fix.
         self._cluster_anchor = None
@@ -110,21 +105,47 @@ class LocationResolver:
         if self._nofix_since is None:
             self._nofix_since = now
 
-        # Fresh unit with nothing saved: bootstrap from IP immediately.
+        # Fresh unit with nothing saved: bootstrap from IP, retried at a rate limit
+        # until it succeeds (a failed lookup must not permanently block bootstrap).
         if not has_saved_home:
-            ip = self._geoip() if not self._did_ip_check else None
-            self._did_ip_check = True
-            if ip is not None:
-                return Decision(action="bootstrap", lat=ip[0], lon=ip[1], source="estimated")
+            if self._ip_allowed(now):
+                self._last_ip_ts = now
+                ip = self._geoip()
+                if ip is not None:
+                    return Decision(action="bootstrap", lat=ip[0], lon=ip[1], source="estimated")
             return Decision(action="none")
 
-        # Persistent no-fix past grace → one IP divergence check.
-        if (now - self._nofix_since) >= self._cfg.nofix_grace_s and not self._did_ip_check:
-            self._did_ip_check = True
+        # Persistent no-fix past grace → IP divergence check, rate-limited and
+        # re-evaluated each interval (not once per process lifetime).
+        if (now - self._nofix_since) >= self._cfg.nofix_grace_s and self._ip_allowed(now):
+            self._last_ip_ts = now
             ip = self._geoip()
             if ip is not None and home is not None:
                 km = haversine_m(ip[0], ip[1], home[0], home[1]) / 1000.0
-                if km >= self._cfg.divergence_km:
+                if km >= self._cfg.divergence_km and not self._notice_active:
                     self._notice_active = True
                     return Decision(action="diverge")
+        return Decision(action="none")
+
+    def _ip_allowed(self, now: float) -> bool:
+        return self._last_ip_ts is None or (now - self._last_ip_ts) >= self._cfg.ip_retry_s
+
+    def _observe_accepted(self, lat: float, lon: float, now: float, home) -> Decision:
+        # Near current home? nothing to do.
+        if home is not None and haversine_m(lat, lon, home[0], home[1]) <= self._cfg.rehome_min_m:
+            self._cluster_anchor = None
+            self._cluster_since = None
+            return Decision(action="none")
+        # Candidate move: maintain a settle cluster.
+        if (
+            self._cluster_anchor is None
+            or haversine_m(lat, lon, self._cluster_anchor[0], self._cluster_anchor[1]) > self._cfg.rehome_min_m
+        ):
+            self._cluster_anchor = (lat, lon)
+            self._cluster_since = now
+            return Decision(action="none")
+        if self._cluster_since is not None and (now - self._cluster_since) >= self._cfg.settle_s:
+            self._cluster_anchor = None
+            self._cluster_since = None
+            return Decision(action="rehome", lat=lat, lon=lon, source="gps")
         return Decision(action="none")

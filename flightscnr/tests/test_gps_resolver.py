@@ -164,3 +164,55 @@ class TestResolverManualMode(unittest.TestCase):
         far = (47.6100, -122.3000)
         d = res.observe(_fix(*far), now=30.0, home=home, mode="manual", has_saved_home=True)
         self.assertEqual(d.action, "none")
+
+
+class TestResolverIpRetryAndNotice(unittest.TestCase):
+    def test_failed_bootstrap_retries_after_interval(self):
+        from utilities.gps_resolver import GpsReport, LocationResolver
+
+        calls = {"n": 0}
+
+        def flaky_ip():
+            calls["n"] += 1
+            return None if calls["n"] == 1 else (47.61, -122.31, "Seattle")
+
+        res = LocationResolver(_cfg(), geoip_lookup=flaky_ip)
+        d0 = res.observe(GpsReport(fix="none"), now=0.0, home=None, mode="auto", has_saved_home=False)
+        self.assertEqual(d0.action, "none")           # IP down on first try
+        d1 = res.observe(GpsReport(fix="none"), now=30.0, home=None, mode="auto", has_saved_home=False)
+        self.assertEqual(d1.action, "none")           # within retry interval, no new lookup
+        d2 = res.observe(GpsReport(fix="none"), now=90.0, home=None, mode="auto", has_saved_home=False)
+        self.assertEqual(d2.action, "bootstrap")      # interval elapsed → retried → success
+        self.assertAlmostEqual(d2.lat, 47.61)
+
+    def test_divergence_still_works_after_a_successful_bootstrap(self):
+        from utilities.gps_resolver import GpsReport, LocationResolver
+
+        res = LocationResolver(_cfg(), geoip_lookup=lambda: (40.0, -75.0, "Philadelphia"))
+        d0 = res.observe(GpsReport(fix="none"), now=0.0, home=None, mode="auto", has_saved_home=False)
+        self.assertEqual(d0.action, "bootstrap")
+        home = (47.6, -122.3)
+        d = res.observe(GpsReport(fix="none"), now=200.0, home=home, mode="auto", has_saved_home=True)
+        self.assertEqual(d.action, "diverge")         # was permanently dead before the fix
+
+    def test_accepted_fix_clears_active_notice(self):
+        from utilities.gps_resolver import GpsReport, LocationResolver
+
+        res = LocationResolver(_cfg(), geoip_lookup=lambda: (40.0, -75.0, "Philadelphia"))
+        home = (47.6, -122.3)
+        res.observe(GpsReport(fix="none"), now=0.0, home=home, mode="auto", has_saved_home=True)
+        d_div = res.observe(GpsReport(fix="none"), now=200.0, home=home, mode="auto", has_saved_home=True)
+        self.assertEqual(d_div.action, "diverge")
+        good = _fix(47.6001, -122.3000)               # ~11 m from home → "near home"
+        d_clear = res.observe(good, now=210.0, home=home, mode="auto", has_saved_home=True)
+        self.assertEqual(d_clear.action, "clear_notice")
+
+    def test_manual_mode_resets_pending_timers(self):
+        from utilities.gps_resolver import GpsReport, LocationResolver
+
+        res = LocationResolver(_cfg(), geoip_lookup=lambda: (40.0, -75.0, "Philadelphia"))
+        home = (47.6, -122.3)
+        res.observe(GpsReport(fix="none"), now=0.0, home=home, mode="auto", has_saved_home=True)
+        res.observe(GpsReport(fix="none"), now=100.0, home=home, mode="manual", has_saved_home=True)
+        d = res.observe(GpsReport(fix="none"), now=200.0, home=home, mode="auto", has_saved_home=True)
+        self.assertEqual(d.action, "none")            # manual reset the no-fix timer; grace not re-met
