@@ -23,6 +23,7 @@ except ImportError:
         return f"http://{name}.local"
 
 from display.round_touch import color_presets, draw, nav, settings, theme
+from display.round_touch.gps_about import status_lines as _gps_about_lines
 
 PAGE_MAIN = 0
 PAGE_DISPLAY = 1
@@ -578,6 +579,14 @@ def draw_info(surface, page: int, scroll_offset: int = 0, display_focus: int = 0
             sys_lines = _system_stat_lines()
         except Exception:
             sys_lines = ["CPU: —", "RAM: —", "Temp: —"]
+        gps_lines = []
+        try:
+            import json
+            from utilities.gps_client import get_client
+
+            gps_lines = _gps_about_lines(get_client().status())
+        except Exception:
+            gps_lines = []
         lines = [
             f"IP: {_local_ip()}",
             f"Host: {_hostname()}.local",
@@ -585,6 +594,7 @@ def draw_info(surface, page: int, scroll_offset: int = 0, display_focus: int = 0
             *sys_lines,
             f"Lat: {LOCATION_HOME[0]:.5f}",
             f"Lon: {LOCATION_HOME[1]:.5f}",
+            *gps_lines,
             _route_api_line("FR24", FR24_API_KEY),
             _route_api_line("AirLabs", AIRLABS_API_KEY),
             _route_api_line("AIS", AISSTREAM_API_KEY),
