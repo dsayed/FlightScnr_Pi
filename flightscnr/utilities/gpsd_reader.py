@@ -11,7 +11,6 @@ import json
 import logging
 import socket
 import threading  # noqa: F401  (documented dependency for callers)
-import time
 
 from utilities.gps_resolver import GpsReport
 
@@ -97,5 +96,5 @@ def stream_reports(host, port, stop_event, on_report, on_device_state, connect_t
                     pass
         if stop_event.is_set():
             break
-        time.sleep(backoff)
+        stop_event.wait(backoff)
         backoff = min(backoff * 2, 30.0)
