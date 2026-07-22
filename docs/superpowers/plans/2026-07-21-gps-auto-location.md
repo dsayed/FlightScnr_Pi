@@ -1227,6 +1227,10 @@ class GpsClient:
             logger.info("GPS %s → %.5f, %.5f", decision.action, decision.lat, decision.lon)
         elif decision.action == "diverge":
             logger.info("GPS divergence notice raised")
+        elif decision.action == "clear_notice":
+            with self._lock:
+                self._divergence = {"active": False, "ip_city": None, "ip_lat": None, "ip_lon": None, "km": None}
+            logger.info("GPS divergence notice cleared")
         self._flush_status(force=True)
 
     def _geoip(self):
