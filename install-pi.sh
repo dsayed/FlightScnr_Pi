@@ -68,6 +68,7 @@ install_apt_packages() {
         libjpeg-dev zlib1g-dev \
         fonts-dejavu-core \
         plymouth plymouth-themes \
+        gpsd gpsd-clients \
         unzip git curl
     log_ok "System packages ready"
 }
@@ -331,6 +332,23 @@ verify_python_deps() {
     return 1
 }
 
+setup_gpsd() {
+    log_step "GPS daemon (gpsd)"
+    local dev="/dev/serial/by-id/usb-u-blox_AG_-_www.u-blox.com_u-blox_7_-_GPS_GNSS_Receiver-if00"
+    # Fall back to ttyACM0 if the by-id path is absent at install time.
+    [ -e "$dev" ] || dev="/dev/ttyACM0"
+    cat > /etc/default/gpsd <<EOF
+# Managed by FlightScnr install-pi.sh
+START_DAEMON="true"
+USBAUTO="true"
+DEVICES="$dev"
+GPSD_OPTIONS="-n"
+EOF
+    systemctl enable gpsd.socket >/dev/null 2>&1 || true
+    systemctl restart gpsd.socket >/dev/null 2>&1 || true
+    log_ok "gpsd configured (device: $dev)"
+}
+
 setup_data_dir() {
     log_step "Runtime data directory"
     install -d -m 0755 "$DATA_DIR"
@@ -494,6 +512,7 @@ cmd_install() {
     extract_logos
     setup_venv
     verify_python_deps || true
+    setup_gpsd
     setup_data_dir
     setup_env_file
     install_systemd_service
