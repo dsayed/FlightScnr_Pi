@@ -428,3 +428,42 @@ Recorded 2026-07-20, radar screen, ~25 aircraft, sweep on, 720×720, adsb.fi + a
 
 Raw profile: `py-spy record -f raw` output saved outside the repo during bring-up; regenerate with
 `sudo ./flightscnr-venv/bin/py-spy record -o /tmp/prof.folded -f raw --pid $(pgrep -f flightscnr.py) --duration 30 --rate 100 --nonblocking --threads`
+
+---
+
+## 9. GPS auto-location (implemented)
+
+Design/plan: `docs/superpowers/specs/2026-07-21-gps-auto-location-design.md` and
+`docs/superpowers/plans/2026-07-21-gps-auto-location.md`. Built on branch `feat/gps-auto-location`.
+
+The Pi locates itself from a USB **u-blox 7** receiver via **gpsd** (installed by `install-pi.sh`'s
+`setup_gpsd`, `USBAUTO` hotplug, localhost-only). An explicit portal **mode = Auto | Manual** decides
+whether GPS drives the radar center.
+
+**New modules (all pure/testable except the client thread):**
+- `utilities/gps_resolver.py` — `haversine_m` (meters, unit-independent), `GpsReport`, and the
+  `LocationResolver` state machine (fix-acceptance gate, settle-cluster re-home, no-fix grace,
+  IP-divergence detection, `clear_notice`).
+- `utilities/gpsd_reader.py` — `apply_gpsd_object` (TPV/SKY → `GpsReport`) and `stream_reports`
+  (localhost gpsd JSON socket, reconnect/backoff). **Note:** count satellites from gpsd's top-level
+  `uSat` first — terse SKY messages carry no per-satellite array (this bit us: `sats_used` stuck at 0
+  silently disabled re-homing until fixed).
+- `utilities/geoip.py` — coarse IP lookup (ipwho.is), used only as a divergence detector / fresh-unit
+  bootstrap.
+- `utilities/gps_client.py` — `GpsClient` background thread (mirrors `ais_client.py`): reads gpsd →
+  runs the resolver → writes `location.json` on a settled re-home and publishes `gps_status.json`.
+  Started from `RoundTouchDisplay.__init__`.
+
+**Location seam (this section's §5 predicted it):** GPS re-homes by writing `location.json`; the
+display's existing 2 s poll applies it through the **new consolidated `_recenter()`** in `app.py`,
+which also **fixed the old divergent invalidation** (the poll path had been missing rainviewer + AIS;
+touch-pan missed AIS). `config.py` gained the location mode/source and the extended `location.json`
+schema (`{mode, lat, lon, source, updated_at}`, backward-compatible).
+
+**Surfaces:** About screen (`screens/info.py`) shows `Source:` + `GPS: 3D, N sats, HDOP`; portal
+Location card has the Auto/Manual toggle, live GPS status, and a divergence notice with *Use estimated*.
+
+**Verified on hardware (2026-07-21):** 3D fix → auto re-home to true coords; manual mode holds against
+GPS; gpsd stop/start → `no_daemon` → `present` recovery with last-known kept. Config knobs:
+`LOCATION_MODE, GPS_ENABLED, GPS_MIN_SATS, GPS_MAX_HDOP, GPS_REHOME_MIN_METERS, GPS_SETTLE_SECONDS,
+GPS_NOFIX_GRACE_SECONDS, GPS_DIVERGENCE_KM, GEOIP_ENABLED, GEOIP_URL` (see `.env.example`).
