@@ -109,6 +109,23 @@ LOCATION_FILE = os.path.join(
 )
 _location_file_mtime: float | None = None
 
+# --- GPS / auto-location ---
+LOCATION_MODE = os.environ.get("LOCATION_MODE", "auto").strip().lower()
+GPS_ENABLED = _bool(os.environ.get("GPS_ENABLED", "True"))
+GPSD_HOST = os.environ.get("GPSD_HOST", "127.0.0.1")
+GPSD_PORT = int(os.environ.get("GPSD_PORT", "2947"))
+GPS_MIN_SATS = int(os.environ.get("GPS_MIN_SATS", "4"))
+GPS_MAX_HDOP = float(os.environ.get("GPS_MAX_HDOP", "5.0"))
+GPS_REHOME_MIN_METERS = float(os.environ.get("GPS_REHOME_MIN_METERS", "250"))
+GPS_SETTLE_SECONDS = float(os.environ.get("GPS_SETTLE_SECONDS", "25"))
+GPS_NOFIX_GRACE_SECONDS = float(os.environ.get("GPS_NOFIX_GRACE_SECONDS", "180"))
+GPS_DIVERGENCE_KM = float(os.environ.get("GPS_DIVERGENCE_KM", "25"))
+GEOIP_ENABLED = _bool(os.environ.get("GEOIP_ENABLED", "True"))
+GEOIP_URL = os.environ.get("GEOIP_URL", "https://ipwho.is/")
+
+_location_mode_runtime = LOCATION_MODE
+_location_source_runtime = "configured"
+
 
 def parse_lat_lon_pair(text: str) -> tuple[float, float]:
     """Parse 'lat, lon' (e.g. '37.639799, -122.368049')."""
@@ -147,9 +164,20 @@ def _apply_home(lat: float, lon: float, source: str | None = None) -> bool:
     return changed
 
 
-def _save_location_file(lat: float, lon: float):
+def _save_location_file(lat: float, lon: float, source: str = "portal"):
+    import datetime
+
     os.makedirs(os.path.dirname(LOCATION_FILE), exist_ok=True)
-    payload = {"lat": lat, "lon": lon}
+    payload = {
+        "mode": _location_mode_runtime,
+        "lat": lat,
+        "lon": lon,
+        "source": source,
+        "updated_at": datetime.datetime.now(datetime.timezone.utc)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z"),
+    }
     tmp_path = LOCATION_FILE + ".tmp"
     with open(tmp_path, "w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
@@ -160,20 +188,44 @@ def _save_location_file(lat: float, lon: float):
         pass
 
 
-def set_location_home(lat: float, lon: float):
-    """Persist and apply radar center coordinates."""
-    global _location_file_mtime
-    _save_location_file(lat, lon)
-    _apply_home(lat, lon, "portal")
+def set_location_home(lat: float, lon: float, source: str = "portal"):
+    """Persist and apply radar center coordinates with a source tag."""
+    global _location_file_mtime, _location_source_runtime
+    _location_source_runtime = source
+    _save_location_file(lat, lon, source)
+    _apply_home(lat, lon, source)
     try:
         _location_file_mtime = os.path.getmtime(LOCATION_FILE)
     except OSError:
         _location_file_mtime = None
 
 
+def location_mode() -> str:
+    return _location_mode_runtime
+
+
+def set_location_mode(mode: str):
+    """Persist the Auto/Manual mode into location.json (keeps current coords)."""
+    global _location_mode_runtime
+    mode = (mode or "auto").strip().lower()
+    if mode not in ("auto", "manual"):
+        mode = "auto"
+    _location_mode_runtime = mode
+    if location_configured():
+        _save_location_file(LOCATION_HOME[0], LOCATION_HOME[1], _location_source_runtime)
+
+
+def location_source() -> str:
+    return _location_source_runtime
+
+
+def has_saved_location() -> bool:
+    return os.path.isfile(LOCATION_FILE)
+
+
 def reload_location_override() -> bool:
     """Reload location.json when changed by another process (e.g. web portal)."""
-    global _location_file_mtime
+    global _location_file_mtime, _location_mode_runtime, _location_source_runtime
     try:
         mtime = os.path.getmtime(LOCATION_FILE) if os.path.isfile(LOCATION_FILE) else None
     except OSError:
@@ -192,20 +244,24 @@ def reload_location_override() -> bool:
         logger.warning("Could not load saved location from %s: %s", LOCATION_FILE, exc)
         _location_file_mtime = mtime
         return False
-    changed = _apply_home(lat, lon, "portal")
+    _location_mode_runtime = str(data.get("mode", _location_mode_runtime)).strip().lower() or "auto"
+    _location_source_runtime = str(data.get("source", "portal"))
+    changed = _apply_home(lat, lon, _location_source_runtime)
     _location_file_mtime = mtime
     return changed
 
 
 def _bootstrap_location_override():
-    global _location_file_mtime
+    global _location_file_mtime, _location_mode_runtime, _location_source_runtime
     if not os.path.isfile(LOCATION_FILE):
         return
     try:
         _location_file_mtime = os.path.getmtime(LOCATION_FILE)
         with open(LOCATION_FILE, encoding="utf-8") as fh:
             data = json.load(fh)
-        _apply_home(float(data["lat"]), float(data["lon"]), "portal")
+        _location_mode_runtime = str(data.get("mode", _location_mode_runtime)).strip().lower() or "auto"
+        _location_source_runtime = str(data.get("source", "portal"))
+        _apply_home(float(data["lat"]), float(data["lon"]), _location_source_runtime)
     except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
         logger.warning("Could not apply saved location from %s: %s", LOCATION_FILE, exc)
 
