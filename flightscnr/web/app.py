@@ -13,9 +13,12 @@ from config import (
     WEB_PORT,
     format_location_home,
     location_configured,
+    location_mode,
+    location_source,
     parse_lat_lon_pair,
     reload_location_override,
     set_location_home,
+    set_location_mode,
 )
 from utilities.fr24_client import FR24Client
 
@@ -293,19 +296,47 @@ def tracked_lookup():
 @app.get("/location/json")
 def location_json():
     reload_location_override()
-    if not location_configured():
-        return jsonify({"location": "", "configured": False})
+    gps = {}
+    try:
+        import json as _json
+
+        status_path = os.path.join(DATA_DIR, "gps_status.json")
+        if os.path.isfile(status_path):
+            with open(status_path, encoding="utf-8") as fh:
+                gps = _json.load(fh)
+    except Exception:
+        gps = {}
     return jsonify({
-        "location": format_location_home(),
-        "configured": True,
+        "location": format_location_home() if location_configured() else "",
+        "configured": location_configured(),
+        "mode": location_mode(),
+        "source": location_source(),
+        "gps": gps,
+        "divergence": gps.get("divergence", {"active": False}),
     })
 
 
 @app.post("/location/set")
 def location_set():
-    data = request.get_json(force=True)
-    if not data:
-        return jsonify({"message": "Invalid request"}), 400
+    data = request.get_json(force=True) or {}
+
+    # Mode switch only.
+    if "mode" in data and "location" not in data:
+        set_location_mode(str(data.get("mode", "auto")))
+        return jsonify({"message": f"Location mode: {location_mode()}", "mode": location_mode()})
+
+    # Resolution action: adopt the coarse IP estimate.
+    if data.get("action") == "use_estimated":
+        try:
+            import json as _json
+
+            with open(os.path.join(DATA_DIR, "gps_status.json"), encoding="utf-8") as fh:
+                div = _json.load(fh).get("divergence", {})
+            set_location_home(float(div["ip_lat"]), float(div["ip_lon"]), source="estimated")
+            return jsonify({"message": "Using estimated location", "location": format_location_home()})
+        except Exception:
+            return jsonify({"message": "No estimated location available"}), 400
+
     raw = data.get("location", "").strip()
     if not raw:
         return jsonify({"message": "Enter coordinates as latitude, longitude"}), 400
@@ -313,8 +344,10 @@ def location_set():
         lat, lon = parse_lat_lon_pair(raw)
     except ValueError as exc:
         return jsonify({"message": str(exc)}), 400
+    # A manual pin sets mode=manual and source=manual.
+    set_location_mode("manual")
     try:
-        set_location_home(lat, lon)
+        set_location_home(lat, lon, source="manual")
         # Force weather + timezone for the new center (display also refreshes
         # when it picks up location.json).
         try:
