@@ -189,6 +189,23 @@
     </details>
 
     <details class="card" open>
+        <summary><span class="ico">&#128205;</span>Location<span class="sum">GPS mode, status</span><span class="chev">&#9656;</span></summary>
+        <div class="body">
+            <label for="loc-mode">Location mode</label>
+            <select id="loc-mode">
+                <option value="auto">Auto (GPS)</option>
+                <option value="manual">Manual</option>
+            </select>
+            <p class="hint">Auto uses onboard GPS when available, falling back to your network location. Manual uses the radar center coordinates set above.</p>
+            <div id="gps-status" class="hint">GPS: &hellip;</div>
+            <div id="gps-divergence" style="display:none;margin-top:.6rem;">
+                <p class="note" id="gps-divergence-text"></p>
+                <button class="btn" id="btn-use-estimated" type="button">Use estimated</button>
+            </div>
+        </div>
+    </details>
+
+    <details class="card" open>
         <summary><span class="ico">&#9788;</span>Display &amp; screens<span class="sum">brightness, timeouts, clock</span><span class="chev">&#9656;</span></summary>
         <div class="body">
             <label for="bright_pct">Screen brightness <span id="bright_pct_label">100%</span></label>
@@ -586,11 +603,42 @@ async function applyUpdate() {
     }
 }
 
-async function loadAll() {
+function applyLocationData(d) {
+    if ($("loc-mode")) $("loc-mode").value = d.mode || "auto";
+    const g = d.gps || {};
+    if ($("gps-status")) {
+        const fix = g.fix ? String(g.fix).toUpperCase() : "—";
+        const dev = g.device && g.device !== "present" ? ` (${g.device})` : "";
+        $("gps-status").textContent =
+            `GPS: ${fix}${dev} · sats ${g.sats_used ?? 0} · source ${d.source || "—"}`;
+    }
+    const div = d.divergence || { active: false };
+    const box = $("gps-divergence");
+    if (box) {
+        if (div.active) {
+            box.style.display = "block";
+            if ($("gps-divergence-text")) {
+                $("gps-divergence-text").textContent =
+                    `GPS has no fix; your network suggests ${div.ip_city || "elsewhere"}, far from the last known location.`;
+            }
+        } else {
+            box.style.display = "none";
+        }
+    }
+    if (d.location && document.activeElement !== $("radar_center")) {
+        $("radar_center").value = d.location;
+    }
+}
+
+async function refreshLocation() {
     try {
-        const loc = await jsonFetch("/location/json");
-        if (loc.location) $("radar_center").value = loc.location;
+        const d = await jsonFetch("/location/json");
+        applyLocationData(d);
     } catch (_) {}
+}
+
+async function loadAll() {
+    await refreshLocation();
 
     try {
         const r = await jsonFetch("/radar/json");
@@ -1018,6 +1066,26 @@ $("btn-update-now").addEventListener("click", applyUpdate);
 $("btn-restart-app").addEventListener("click", requestAppRestart);
 $("btn-reboot").addEventListener("click", () => requestSystemAction("reboot"));
 $("btn-shutdown").addEventListener("click", () => requestSystemAction("shutdown"));
+$("loc-mode").addEventListener("change", async (e) => {
+    try {
+        await jsonFetch("/location/set", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ mode: e.target.value }),
+        });
+    } catch (_) {}
+    refreshLocation();
+});
+$("btn-use-estimated").addEventListener("click", async () => {
+    try {
+        await jsonFetch("/location/set", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "use_estimated" }),
+        });
+    } catch (_) {}
+    refreshLocation();
+});
 $("btn-radar").addEventListener("click", saveRadar);
 $("btn-display").addEventListener("click", saveDisplay);
 $("btn-save-reload").addEventListener("click", saveAndReloadSettings);
@@ -1040,6 +1108,7 @@ if ($("vfr_opacity")) $("vfr_opacity").addEventListener("input", syncVfrOpacityL
 document.addEventListener("DOMContentLoaded", () => {
     loadAll();
     checkUpdates();
+    setInterval(refreshLocation, 5000);
 });
 </script>
 </body>
