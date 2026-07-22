@@ -172,12 +172,14 @@ class GpsClient:
 
 
 _client: GpsClient | None = None
+_client_lock = threading.Lock()
 
 
 def get_client() -> GpsClient:
     global _client
-    if _client is None:
-        _client = GpsClient()
+    with _client_lock:
+        if _client is None:
+            _client = GpsClient()
     return _client
 
 
