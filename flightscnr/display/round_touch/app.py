@@ -8,6 +8,7 @@ from threading import Thread
 
 import pygame
 
+from utilities.ais_client import sync_ais_client
 from utilities.overhead import Overhead
 from utilities.route_enrichment import (
     fetch_route_enrichment,
@@ -630,33 +631,18 @@ class RoundTouchDisplay:
         if not self._panning_map:
             return
         from config import set_location_home
-        from display.round_touch import geo, weather_data
+        from display.round_touch import geo
 
         ox, oy = self._pan_offset
         lat, lon = geo.screen_to_lat_lon(
             theme.CENTER_X - ox,
             theme.CENTER_Y - oy,
         )
-        set_location_home(lat, lon)
-        map_bg.invalidate()
-        map_bg.prewarm_all_scales()
-        rainviewer_overlay.invalidate()
-        rainviewer_overlay.request_overlay()
-        self._position_smoother.reset()
+        set_location_home(lat, lon, source="manual")
         self._panning_map = False
         self._pan_offset = (0, 0)
         self._pan_drag_start = None
-
-        def _after_recenter():
-            try:
-                weather_data.after_radar_center_changed(lat, lon)
-            except Exception:
-                logger.exception("Weather/timezone refresh after map recenter failed")
-            else:
-                self._weather_redraw_pending = True
-
-        Thread(target=_after_recenter, daemon=True).start()
-        self.overhead.grab_data()
+        self._recenter(lat, lon, source="manual")
         self._refresh_flights()
 
     def _update_map_pan_drag(self) -> bool:
@@ -1494,28 +1480,40 @@ class RoundTouchDisplay:
             logger.debug("AIS sync after settings reload failed", exc_info=True)
         self._safe_draw()
 
+    def _recenter(self, lat, lon, source="portal"):
+        """Single source of truth for re-homing side effects (fixes the old
+        divergent invalidation between touch-pan, the location poll, and GPS)."""
+        map_bg.invalidate()
+        map_bg.prewarm_all_scales()
+        rainviewer_overlay.invalidate()
+        rainviewer_overlay.request_overlay()
+        try:
+            sync_ais_client()
+        except Exception:
+            logger.debug("AIS resubscribe after recenter skipped", exc_info=True)
+        self._position_smoother.reset()
+
+        def _after_recenter():
+            try:
+                from display.round_touch import weather_data
+
+                weather_data.after_radar_center_changed(float(lat), float(lon))
+            except Exception:
+                logger.exception("Weather/timezone refresh after recenter failed")
+            else:
+                self._weather_redraw_pending = True
+
+        Thread(target=_after_recenter, daemon=True).start()
+        self.overhead.grab_data()
+
     def _maybe_reload_location(self):
         try:
-            from config import LOCATION_HOME, reload_location_override
-            from display.round_touch import map_bg, weather_data
+            from config import LOCATION_HOME, reload_location_override, location_source
 
             if not reload_location_override():
                 return
-            map_bg.invalidate()
-            map_bg.prewarm_all_scales()
-            self._position_smoother.reset()
-            self.overhead.grab_data()
             lat, lon = float(LOCATION_HOME[0]), float(LOCATION_HOME[1])
-
-            def _after_recenter():
-                try:
-                    weather_data.after_radar_center_changed(lat, lon)
-                except Exception:
-                    logger.exception("Weather/timezone refresh after location change failed")
-                else:
-                    self._weather_redraw_pending = True
-
-            Thread(target=_after_recenter, daemon=True).start()
+            self._recenter(lat, lon, source=location_source())
             self._safe_draw()
         except ImportError:
             pass
