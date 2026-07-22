@@ -67,3 +67,14 @@ class TestApplyGpsdObject(unittest.TestCase):
         self.assertAlmostEqual(after_tpv.hdop, 1.5)
         self.assertEqual(after_tpv.sats_used, 1)
         self.assertEqual(after_tpv.fix, "3d")
+
+    def test_no_fix_tpv_with_coords_keeps_prior_position(self):
+        from utilities.gpsd_reader import apply_gpsd_object
+        from utilities.gps_resolver import GpsReport
+
+        prior = GpsReport(fix="3d", lat=47.6, lon=-122.3, sats_used=7, hdop=1.0, speed_mps=0.0)
+        # A degraded TPV dropping to mode 1 with stale coords must NOT overwrite the fix.
+        r = apply_gpsd_object({"class": "TPV", "mode": 1, "lat": 0.0, "lon": 0.0}, prior)
+        self.assertEqual(r.fix, "none")
+        self.assertAlmostEqual(r.lat, 47.6)
+        self.assertAlmostEqual(r.lon, -122.3)

@@ -21,16 +21,12 @@ def apply_gpsd_object(obj: dict, current: GpsReport) -> GpsReport:
     """Fold one gpsd JSON object into a new GpsReport (TPV=position, SKY=quality)."""
     cls = obj.get("class")
     if cls == "TPV":
-        updated = dataclasses.replace(
-            current,
-            fix=_MODE_TO_FIX.get(int(obj.get("mode", 0)), "none"),
-        )
-        if "lat" in obj and "lon" in obj:
+        fix = _MODE_TO_FIX.get(int(obj.get("mode", 0)), "none")
+        updated = dataclasses.replace(current, fix=fix)
+        # Only trust position when there is a fix; on no-fix, keep prior coords.
+        if fix != "none" and "lat" in obj and "lon" in obj:
             updated.lat = float(obj["lat"])
             updated.lon = float(obj["lon"])
-        if updated.fix == "none":
-            # Position invalid without a fix; keep last coords for display but flag none.
-            pass
         if "speed" in obj:
             try:
                 updated.speed_mps = float(obj["speed"])
