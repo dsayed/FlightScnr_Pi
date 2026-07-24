@@ -101,6 +101,7 @@ class TestLatLonFacing(unittest.TestCase):
     def setUp(self):
         import display.round_touch.settings as settings
         import display.round_touch.theme as theme
+        from display.round_touch import scale
 
         self.settings = settings
         settings._facing_preview = None
@@ -108,9 +109,20 @@ class TestLatLonFacing(unittest.TestCase):
         settings._state["facing_deg"] = 0.0
         # Stable geometry for assertions
         theme.set_framebuffer_side(720)
+        # Pin a deterministic range band. screen projection quantizes to integer
+        # pixels (enu_to_screen), so the lat/lon roundtrip precision is
+        # scale-dependent; don't ride on the module default band.
+        self._saved_units = scale.active_units()
+        self._saved_index = scale.active_index()
+        scale.set_units("mi")
+        scale.select(1)
 
     def tearDown(self):
         self.settings.set_facing_preview(None)
+        from display.round_touch import scale
+
+        scale.set_units(self._saved_units)
+        scale.select(self._saved_index)
 
     def test_north_of_home_is_above_center_when_north_up(self):
         from display.round_touch import geo
