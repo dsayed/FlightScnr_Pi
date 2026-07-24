@@ -90,6 +90,14 @@ class RoundTouchDisplay:
                 pygame.display.quit()
                 self._display = video.init_display(fit_side, fit_side, fullscreen)
         self.surface = pygame.Surface((theme.SIZE, theme.SIZE))
+        # Software brightness dim: HDMI panels expose no backlight sysfs, so we
+        # composite a translucent-black overlay in _present() instead. Active
+        # only when there is no hardware backlight to drive.
+        from display.round_touch import backlight
+
+        self._software_dim_active = not backlight.has_hardware()
+        self._brightness_pct = 100
+        self._dim_overlay: pygame.Surface | None = None
         pygame.mouse.set_visible(False)
         pygame.event.set_allowed(
             None
@@ -358,7 +366,29 @@ class RoundTouchDisplay:
 
     def _present(self):
         rotation.present(self._display, self.surface)
+        self._apply_software_dim()
         pygame.display.flip()
+
+    def _apply_software_dim(self):
+        """Composite a translucent-black overlay to emulate brightness on panels
+        with no hardware backlight (HDMI). Compositing black at alpha a scales
+        content luminance by (1 - a/255), so brightness_pct maps linearly to
+        luminance. Applied to the display surface so self.surface stays pristine.
+        """
+        if not self._software_dim_active:
+            return
+        pct = self._brightness_pct
+        if pct >= 100:
+            return
+        from display.round_touch import backlight
+
+        alpha = backlight.software_dim_alpha(pct)
+        size = self._display.get_size()
+        if self._dim_overlay is None or self._dim_overlay.get_size() != size:
+            self._dim_overlay = pygame.Surface(size)
+            self._dim_overlay.fill((0, 0, 0))
+        self._dim_overlay.set_alpha(alpha)
+        self._display.blit(self._dim_overlay, (0, 0))
 
     def _draw(self):
         if self._fatal_error:
@@ -745,6 +775,9 @@ class RoundTouchDisplay:
             not in (SCREEN_CLOCK, SCREEN_CLOCK_SETTINGS, SCREEN_FORECAST)
         ):
             pct = day_pct
+        # Record for the software-dim path; hardware backlight (DSI) takes this
+        # value directly, HDMI applies it as an overlay in _present().
+        self._brightness_pct = max(0, min(100, int(pct)))
         backlight.apply_percent(pct)
 
     def _wake_for_off_hours_touch(self):
