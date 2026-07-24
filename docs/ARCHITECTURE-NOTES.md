@@ -9,6 +9,12 @@ and faster**, **add GPS**, and **ingest ADS-B locally from an SDR**.
   Python 3.13.5, pygame 2.6.1 (SDL 2.32.4)
 - Notes written 2026-07-20
 
+> **See also:** [`HDMI-PANEL-BRINGUP.md`](./HDMI-PANEL-BRINGUP.md) — findings and
+> architecture analysis from bringing the app up on the **HDMI** variant of the
+> round panel (wrong-panel bring-up, 2026-07-24): the two-process model,
+> cross-process settings sync, unit-aware range bands, software brightness dim
+> for HDMI, GPS source-vs-mode semantics, and the multitouch/`wl_touch` dead-end.
+
 ---
 
 ## 0. Deployment as we run it
