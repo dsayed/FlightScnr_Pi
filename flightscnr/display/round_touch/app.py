@@ -574,8 +574,9 @@ class RoundTouchDisplay:
             settings.toggle_sweep_line()
         elif action == "precipitation":
             settings.toggle_show_precipitation()
-            from display.round_touch import rainviewer_overlay
-
+            # rainviewer_overlay is imported at module scope; a local re-import
+            # here would shadow it and make the name function-local for the whole
+            # method, breaking the earlier "range" branch (UnboundLocalError).
             rainviewer_overlay.invalidate()
             rainviewer_overlay.request_overlay()
         elif action == "map_style":
