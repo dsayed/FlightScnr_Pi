@@ -414,9 +414,14 @@
 <script>
 let pendingCallsign = "";
 let currentScaleIndex = 1;
-let rangePresetsMi = [2, 3, 5, 8, 10, 20, 30];
-const STATUTE_MILE_KM = 1.609344;
-const NM_PER_KM = 1 / 1.852;
+// Per-unit round presets (server overrides via /radar/json). Bands are
+// unit-native: in unit U the snap targets ARE presetsByUnit[U], so snapping is
+// just "nearest preset number" — the entered value and presets share the unit.
+let presetsByUnit = {
+    mi: [2, 3, 5, 8, 10, 20, 30],
+    nm: [2, 3, 5, 8, 10, 20, 30],
+    km: [2, 5, 8, 15, 20, 30, 50],
+};
 const $ = (id) => document.getElementById(id);
 
 function showStatus(id, msg, error = false) {
@@ -451,23 +456,16 @@ function applyKeyHints(keys) {
     });
 }
 
-function rangeValueToKm(value, units) {
-    if (units === "mi") return value * STATUTE_MILE_KM;
-    if (units === "nm") return value * 1.852;
-    return value;
-}
-
-function rangeLabelKmForIndex(index) {
-    const idx = Math.max(0, Math.min(index, rangePresetsMi.length - 1));
-    return rangePresetsMi[idx] * STATUTE_MILE_KM;
+function presetsFor(units) {
+    return presetsByUnit[units] || presetsByUnit.km;
 }
 
 function snapRangeIndex(value, units) {
-    const targetKm = rangeValueToKm(value, units);
+    const presets = presetsFor(units);
     let bestIdx = 0;
     let bestDiff = Infinity;
-    for (let i = 0; i < rangePresetsMi.length; i += 1) {
-        const diff = Math.abs(rangeLabelKmForIndex(i) - targetKm);
+    for (let i = 0; i < presets.length; i += 1) {
+        const diff = Math.abs(presets[i] - value);
         if (diff < bestDiff) {
             bestDiff = diff;
             bestIdx = i;
@@ -477,23 +475,18 @@ function snapRangeIndex(value, units) {
 }
 
 function formatRangeDisplay(index, units) {
-    const labelKm = rangeLabelKmForIndex(index);
-    let value;
-    if (units === "mi") value = labelKm / STATUTE_MILE_KM;
-    else if (units === "nm") value = labelKm * NM_PER_KM;
-    else value = labelKm;
-    if (units === "km" && value >= 10) return String(Math.round(value));
-    if ((units === "mi" || units === "nm") && Math.abs(value - Math.round(value)) < 0.05) {
-        return String(Math.round(value));
-    }
-    return value.toFixed(1);
+    const presets = presetsFor(units);
+    const idx = Math.max(0, Math.min(index, presets.length - 1));
+    return String(presets[idx]);
 }
 
-function updateRangeHint(presetsMi) {
-    if (presetsMi && presetsMi.length) rangePresetsMi = presetsMi;
-    const list = rangePresetsMi.join(", ");
+function updateRangeHint(presets) {
+    if (presets && typeof presets === "object") presetsByUnit = presets;
+    const units = $("dist_units").value || "km";
+    const list = presetsFor(units).join(", ");
+    const unitWord = units === "km" ? "km" : units;
     $("range_hint").textContent =
-        `Snaps to nearest preset when saved: ${list} mi (converted for km/nm).`;
+        `Snaps to nearest preset when saved: ${list} ${unitWord}.`;
 }
 
 function refreshRangeInput() {
@@ -644,7 +637,7 @@ async function loadAll() {
         const r = await jsonFetch("/radar/json");
         currentScaleIndex = Number(r.scale_index ?? 1);
         $("dist_units").value = r.distance_units || "km";
-        updateRangeHint(r.range_presets_mi);
+        updateRangeHint(r.range_presets);
         refreshRangeInput();
         $("min_height").value = String(r.min_height_ft ?? 1000);
         $("max_height").value = String(r.max_height_ft ?? 100000);
@@ -1100,7 +1093,10 @@ $("btn-route").addEventListener("click", searchRoute);
 $("btn-keys-save").addEventListener("click", () => saveApiKeys(false));
 $("btn-keys-restart").addEventListener("click", () => saveApiKeys(true));
 $("night_mode").addEventListener("change", toggleDimRow);
-$("dist_units").addEventListener("change", refreshRangeInput);
+$("dist_units").addEventListener("change", () => {
+    updateRangeHint();
+    refreshRangeInput();
+});
 $("range_value").addEventListener("blur", snapRangeInputPreview);
 $("bright_pct").addEventListener("input", syncBrightLabel);
 if ($("vfr_opacity")) $("vfr_opacity").addEventListener("input", syncVfrOpacityLabel);

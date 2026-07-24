@@ -652,6 +652,9 @@ def radar_json():
             "distance_units": units,
             "scale_index": idx,
             "range_value": scale.format_display_value(idx, units),
+            # Per-unit round presets. Bands are unit-native, so within a unit the
+            # snap targets ARE these values (no cross-unit km conversion needed).
+            "range_presets": {u: list(scale.presets_for(u)) for u in ("mi", "nm", "km")},
             "range_presets_mi": list(scale.PRESET_STATUTE_MILES),
             "min_height_ft": settings.min_height_ft(),
             "max_height_ft": settings.max_height_ft(),

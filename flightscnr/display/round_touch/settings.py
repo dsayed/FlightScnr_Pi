@@ -143,6 +143,35 @@ def _ensure_height_band(state: dict | None = None) -> bool:
     return changed
 
 
+def _apply_active_units(invalidate: bool = False) -> None:
+    """Point scale.py at the active distance unit's band table.
+
+    Bands are unit-aware, so index i maps to a different physical distance per
+    unit. When the unit actually changes we must drop the scale-index-keyed
+    tile caches (map + rainviewer) so they refetch at the new physical scale.
+    """
+    try:
+        from display.round_touch import scale
+    except ImportError:
+        return
+    units = distance_units()
+    if scale.active_units() == units and not invalidate:
+        return
+    changed = scale.active_units() != units
+    scale.set_units(units)
+    if invalidate and changed:
+        # Drop scale-index-keyed tile caches; the radar draw loop refetches at
+        # the new physical scale on its next frame (no explicit request here, so
+        # this stays safe to call from the display-less portal process too).
+        try:
+            from display.round_touch import map_bg, rainviewer_overlay
+
+            map_bg.invalidate()
+            rainviewer_overlay.invalidate()
+        except ImportError:
+            pass
+
+
 def _seed_from_env(state: dict) -> None:
     """First-run defaults from /etc/flightscnr.env (not applied after settings are saved)."""
     try:
@@ -150,6 +179,8 @@ def _seed_from_env(state: dict) -> None:
         from display.round_touch import map_bg, scale
 
         state["distance_units"] = "mi" if DISTANCE_UNITS.strip().lower() == "imperial" else "km"
+        # index_for_radius_nm reads the active-unit band table, so set units first.
+        scale.set_units(state["distance_units"])
         state["scale_index"] = scale.index_for_radius_nm(SEARCH_RADIUS_NM)
         state["min_height_ft"] = _snap_min_height(MIN_HEIGHT)
         state["max_height_ft"] = _snap_max_height(MAX_HEIGHT)
@@ -358,6 +389,9 @@ def reload() -> bool:
     _disk_synced = True
     _sync_config_min_height()
     _sync_config_max_height()
+    # Portal process may have changed units; re-point scale and drop stale
+    # scale-index-keyed tile caches so the map refetches at the new scale.
+    _apply_active_units(invalidate=True)
     # Re-apply runtime palette when theme changes are saved externally
     # (e.g. from the web portal process).
     apply_theme_colors()
@@ -466,6 +500,7 @@ def toggle_distance_units():
     cur = distance_units()
     _state["distance_units"] = order[(order.index(cur) + 1) % len(order)]
     _save(_state)
+    _apply_active_units(invalidate=True)
 
 
 def set_distance_units(units: str):
@@ -474,6 +509,7 @@ def set_distance_units(units: str):
         raw = "km"
     _state["distance_units"] = raw
     _save(_state)
+    _apply_active_units(invalidate=True)
 
 
 def show_sweep_line() -> bool:
@@ -862,3 +898,4 @@ def apply_theme_colors():
 
 
 apply_theme_colors()
+_apply_active_units()
