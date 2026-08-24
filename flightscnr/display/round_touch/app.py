@@ -1585,6 +1585,8 @@ class RoundTouchDisplay:
         self._display_focus = row
         if action == "traffic":
             self._open_atc_picker("traffic")
+        elif action == "radar_style":
+            self._open_atc_picker("radar_style")
         elif action == "brightness":
             # Brightness is a drag slider; taps are handled via brightness_slider_at.
             return
@@ -1896,6 +1898,10 @@ class RoundTouchDisplay:
             from display.round_touch import airport_overlay
 
             airport_overlay.invalidate()
+            return
+        if kind == "radar_style":
+            settings.set_radar_style(choice)
+            radar.invalidate_frame_layer()
             return
         if kind == "traffic":
             settings.set_traffic_mode(choice)

@@ -24,6 +24,7 @@ from display.round_touch import (
     rainviewer_overlay,
     scale,
     settings,
+    stars,
     theme,
     wildfire_overlay,
     earthquake_overlay,
@@ -55,6 +56,7 @@ _FRAME_LAYER_TTL_S = 0.2
 # the GIL. Decay toward the base TTL so a single cold-cache rebuild (icon
 # rotate / airport DB) doesn't leave the layer stuck at multi-second refresh.
 _layer_build_cost_s = 0.0
+_stars_history = stars.TrackHistory(max_points=5, min_distance_px=theme.s(4))
 
 
 # Dense AIS+ADS-B rebuilds can cost 50–150ms; without a ceiling, cost*3 would
@@ -73,11 +75,12 @@ def _layer_ttl_s() -> float:
 
 
 def _init_sweep():
-    global _sweep_angle, _sweep_last_ms, _backdrop, _backdrop_key
+    global _sweep_angle, _sweep_last_ms, _backdrop, _backdrop_key, _stars_history
     _sweep_angle = 0.0
     _sweep_last_ms = time.time() * 1000
     _backdrop = None
     _backdrop_key = None
+    _stars_history = stars.TrackHistory(max_points=5, min_distance_px=theme.s(4))
     invalidate_frame_layer()
 
 
@@ -1215,9 +1218,126 @@ def _flight_icon_color(flight, *, compact: bool):
     return _overlay_color_for_basemap(theme.AIRCRAFT)
 
 
+def _stars_aircraft_enabled(flight) -> bool:
+    return settings.radar_style() == "stars" and flight.get("kind") != "vessel"
+
+
+def _dim_color(color: tuple, factor: float) -> tuple[int, int, int]:
+    return (
+        max(0, min(255, int(color[0] * factor))),
+        max(0, min(255, int(color[1] * factor))),
+        max(0, min(255, int(color[2] * factor))),
+    )
+
+
+def _draw_stars_symbol(surface, x: int, y: int, flight, *, compact: bool = False) -> None:
+    color = _flight_icon_color(flight, compact=compact)
+    kind = stars.symbol_kind(flight)
+    if kind == "ground" and not aircraft_alert.is_highlighted(flight) and not _is_tracked(flight):
+        color = _overlay_color_for_basemap(theme.HINT)
+    if kind == "ground":
+        half = theme.s(4) if compact else theme.s(5)
+        rect = pygame.Rect(int(x) - half, int(y) - half, half * 2, half * 2)
+        pygame.draw.rect(surface, color, rect, max(1, theme.s(1)))
+    elif kind == "dot":
+        pygame.draw.circle(surface, color, (int(x), int(y)), theme.s(3) if compact else theme.s(4))
+    else:
+        r = theme.s(6) if compact else theme.s(8)
+        pts = [(int(x), int(y) - r), (int(x) + r, int(y) + r), (int(x) - r, int(y) + r)]
+        pygame.draw.polygon(surface, color, pts, max(1, theme.s(2)))
+
+    if _is_tracked(flight) and not compact:
+        pygame.draw.circle(
+            surface,
+            _overlay_color_for_basemap(theme.SWEEP),
+            (int(x), int(y)),
+            theme.s(13),
+            max(1, theme.s(1)),
+        )
+
+
+def _draw_stars_vector(surface, x: int, y: int, flight) -> None:
+    endpoint = stars.project_vector_lat_lon(flight)
+    if endpoint is None:
+        return
+    ex, ey = geo.lat_lon_to_screen(endpoint[0], endpoint[1])
+    color = _dim_color(_flight_icon_color(flight, compact=False), 0.75)
+    pygame.draw.line(surface, color, (int(x), int(y)), (int(ex), int(ey)), max(1, theme.s(1)))
+
+
+def _draw_stars_history(surface, x: int, y: int, flight) -> None:
+    identity = stars.track_identity(flight)
+    history = _stars_history.update(identity, (x, y))
+    if not history:
+        return
+    base = _overlay_color_for_basemap(theme.HINT)
+    count = max(1, len(history))
+    for i, (hx, hy) in enumerate(history):
+        factor = 0.35 + (0.35 * (i + 1) / count)
+        pygame.draw.circle(surface, _dim_color(base, factor), (int(hx), int(hy)), max(1, theme.s(2)))
+
+
+def _stars_data_block_bounds() -> tuple[int, int, int, int]:
+    margin = theme.s(14)
+    left = theme.CENTER_X - theme.VISIBLE_RADIUS + margin
+    top = theme.CENTER_Y - theme.VISIBLE_RADIUS + margin
+    side = max(1, theme.VISIBLE_RADIUS * 2 - margin * 2)
+    return (left, top, side, side)
+
+
+def _render_stars_block_lines(flight):
+    main_font = draw.load_font(theme.FONT_TAG, bold=True)
+    sub_font = draw.load_font(theme.FONT_TAG_SUB, bold=True)
+    lines = stars.format_data_block(flight)
+    colors = [
+        _overlay_color_for_basemap(theme.GRID),
+        _overlay_color_for_basemap(aircraft.altitude_tag_color(flight.get("vertical_speed"))),
+        _overlay_color_for_basemap(theme.HINT),
+    ]
+    out = []
+    for i, text in enumerate(lines):
+        font = main_font if i == 0 else sub_font
+        color = colors[min(i, len(colors) - 1)]
+        out.append((draw.render_text_cached(font, text, color), font))
+    return out
+
+
+def _draw_stars_data_blocks(surface, items: list[tuple[float, dict, tuple[int, int]]]) -> None:
+    if not settings.show_aircraft_labels():
+        return
+    occupied: list[stars.RectTuple] = []
+    bounds = _stars_data_block_bounds()
+    gap = theme.s(18)
+    line_gap = theme.s(1)
+
+    for _, flight, (x, y) in sorted(items, key=lambda item: item[0]):
+        rendered = _render_stars_block_lines(flight)
+        if not rendered:
+            continue
+        width = max(surf.get_width() for surf, _ in rendered)
+        height = sum(surf.get_height() for surf, _ in rendered) + line_gap * (len(rendered) - 1)
+        rect_tuple = stars.place_data_block((x, y), (width, height), occupied, bounds, gap=gap, pad=theme.s(4))
+        occupied.append(rect_tuple)
+        rect = pygame.Rect(rect_tuple)
+        leader_end = stars.leader_endpoint((x, y), rect_tuple)
+        if settings.show_tag_leaders():
+            pygame.draw.line(
+                surface,
+                _overlay_color_for_basemap(theme.HINT),
+                (int(x), int(y)),
+                leader_end,
+                max(1, theme.s(1)),
+            )
+        ty = rect.top
+        for surf, _font in rendered:
+            surface.blit(surf, (rect.left, ty))
+            ty += surf.get_height() + line_gap
+
+
 def _draw_flights(surface, flights):
     from display.round_touch import alert_prefs, frame_debug, map_bg
 
+    stars_mode = settings.radar_style() == "stars"
     _t = frame_debug.mark("2r_f_vis")
     # One prefs stat() for the whole pass — is_shown_on_radar used to do this
     # per target and dominated visibility time with ~100 aircraft.
@@ -1265,7 +1385,16 @@ def _draw_flights(surface, flights):
         inner_items.sort(key=_draw_order)
         _t = frame_debug.end("2r_f_sort", _t)
 
+        stars_inner: list[tuple[float, dict, tuple[int, int]]] = []
+        active_stars_ids: set[str] = set()
+
         for _, flight, (x, y) in rim_items:
+            if _stars_aircraft_enabled(flight):
+                identity = stars.track_identity(flight)
+                if identity:
+                    active_stars_ids.add(identity)
+                _draw_stars_symbol(surface, x, y, flight, compact=True)
+                continue
             aircraft.draw_plane_icon(
                 surface,
                 x,
@@ -1276,15 +1405,33 @@ def _draw_flights(surface, flights):
                 flight=flight,
             )
 
-        for _, flight, (x, y) in inner_items:
+        for dist_km, flight, (x, y) in inner_items:
+            if _stars_aircraft_enabled(flight):
+                identity = stars.track_identity(flight)
+                if identity:
+                    active_stars_ids.add(identity)
+                _draw_stars_history(surface, x, y, flight)
+                _draw_stars_vector(surface, x, y, flight)
+                _draw_stars_symbol(surface, x, y, flight, compact=False)
+                stars_inner.append((dist_km, flight, (x, y)))
+                continue
             heading = geo.screen_heading(flight.get("heading") or 0)
             color = _flight_icon_color(flight, compact=False)
             aircraft.draw_plane_icon(surface, x, y, heading, color, flight=flight)
         _t = frame_debug.end("2r_f_icons", _t)
 
+        if stars_mode:
+            _draw_stars_data_blocks(surface, stars_inner)
+            _stars_history.prune(active_stars_ids)
+
         placed_tags: list[pygame.Rect] = []
-        blips = [(x, y) for _, _, (x, y) in inner_items]
-        for _, flight, (x, y) in inner_items:
+        classic_inner = [
+            (dist_km, flight, xy)
+            for dist_km, flight, xy in inner_items
+            if not _stars_aircraft_enabled(flight)
+        ]
+        blips = [(x, y) for _, _, (x, y) in classic_inner]
+        for _, flight, (x, y) in classic_inner:
             _draw_aircraft_tag(surface, x, y, flight, placed_tags, blips)
         frame_debug.end("2r_f_tags", _t)
         frame_debug.count("targets_drawn", len(rim_items) + len(inner_items))

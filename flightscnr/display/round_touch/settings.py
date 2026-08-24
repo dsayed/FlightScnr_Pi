@@ -13,7 +13,7 @@ import json
 import logging
 import os
 
-from display.round_touch import color_presets, theme
+from display.round_touch import color_presets, stars, theme
 logger = logging.getLogger("flightscnr.display")
 
 DATA_DIR = os.environ.get("FLIGHTSCNR_DATA_DIR", "/var/lib/flightscnr")
@@ -88,6 +88,7 @@ MAP_STYLE_LABELS = {
     "voyager": "Street: Voyager",
     "satellite": "Satellite: Esri",
 }
+RADAR_STYLES = stars.RADAR_STYLES
 
 # Waveshare DSI panels stay lit near ~3% (raw ~8/255); 10% was needlessly bright at night.
 BRIGHTNESS_MIN_PERCENT = 3
@@ -304,6 +305,8 @@ _defaults = {
     # dark | osm | stadia_dark | toner | satellite | streets | black | light | voyager | vfr
     "map_style": "dark",
     "vfr_map_opacity": 45,
+    # classic | stars — aircraft symbol/tag style; default preserves legacy radar
+    "radar_style": "classic",
     # Clockwise UI + touch mapping: 0, 90, 180, 270 (physical panel mount).
     "display_rotation": 90,
     # ATC audio (LiveATC via mpv) — non-secret prefs.
@@ -709,6 +712,10 @@ def _load():
     except (TypeError, ValueError):
         state["vfr_map_opacity"] = 45
         migrated = True
+    style = stars.normalize_radar_style(state.get("radar_style"))
+    if state.get("radar_style") != style or "radar_style" not in data:
+        state["radar_style"] = style
+        migrated = True
     if "display_rotation" not in data:
         state["display_rotation"] = _env_display_rotation()
         migrated = True
@@ -983,6 +990,7 @@ def _settings_snapshot(state: dict) -> tuple:
         state.get("ais_enabled"),
         state.get("map_style"),
         state.get("vfr_map_opacity"),
+        stars.normalize_radar_style(state.get("radar_style")),
         _normalize_display_rotation(state.get("display_rotation", 90)),
         # ATC is edited from the web portal in a separate process — include it
         # so disk changes retune the device UI without an explicit reload flag.
@@ -1560,6 +1568,27 @@ def set_vfr_map_opacity(value: int, *, persist: bool = True) -> int:
     except Exception:
         pass
     return pct
+
+
+def radar_style() -> str:
+    return stars.normalize_radar_style(_state.get("radar_style"))
+
+
+def radar_style_label() -> str:
+    return "STARS" if radar_style() == "stars" else "classic"
+
+
+def set_radar_style(value: str) -> str:
+    style = stars.normalize_radar_style(value)
+    _state["radar_style"] = style
+    _save(_state)
+    return style
+
+
+def cycle_radar_style() -> str:
+    cur = radar_style()
+    idx = RADAR_STYLES.index(cur) if cur in RADAR_STYLES else 0
+    return set_radar_style(RADAR_STYLES[(idx + 1) % len(RADAR_STYLES)])
 
 
 def traffic_mode() -> str:

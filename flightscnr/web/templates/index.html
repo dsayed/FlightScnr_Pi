@@ -208,6 +208,12 @@
                 <option value="satellite">Satellite: Esri</option>
             </select>
             <p class="hint">Dark/Light/Street/Satellite Carto, OSM, Esri, Voyager, Flat, and VFR need no key. Dark: Stadia and Light: Toner need a free STADIA_MAPS_API_KEY. VFR sectionals are public-domain FAA charts (US coverage).</p>
+            <label for="radar_style">Radar display style</label>
+            <select id="radar_style">
+                <option value="classic">Classic</option>
+                <option value="stars">STARS</option>
+            </select>
+            <p class="hint">STARS uses ATC-style aircraft symbols, velocity vectors, trails, and compact data blocks. Marine AIS keeps the classic renderer.</p>
             <label for="vfr_opacity">VFR map opacity <span id="vfr_opacity_label">45%</span></label>
             <input id="vfr_opacity" type="range" min="15" max="100" step="1" value="45">
             <p class="hint">How strong the VFR chart appears under traffic (lower = paler). Applies when map style is VFR.</p>
@@ -1137,6 +1143,7 @@ async function loadAll() {
         setRgbInputs("theme", r.theme_rgb || [0, 255, 0]);
         setRgbInputs("runway", r.runway_darkmap_rgb || [225, 128, 0]);
         if ($("map_style")) $("map_style").value = r.map_style || "dark";
+        if ($("radar_style")) $("radar_style").value = r.radar_style || "classic";
         if ($("vfr_opacity")) {
             $("vfr_opacity").value = String(r.vfr_map_opacity ?? 45);
             syncVfrOpacityLabel();
@@ -1413,6 +1420,7 @@ async function saveRadar() {
                 show_airport_icons: $("show_airport_icons") ? $("show_airport_icons").checked : false,
                 show_ground_vehicles: $("show_ground_vehicles") ? $("show_ground_vehicles").checked : true,
                 map_style: $("map_style").value,
+                radar_style: $("radar_style") ? $("radar_style").value : "classic",
                 vfr_map_opacity: Number($("vfr_opacity") ? $("vfr_opacity").value : 45),
                 traffic_mode: $("traffic_mode").value,
                 vessel_min_speed_kt: Number($("vessel_min_speed") ? $("vessel_min_speed").value : 0),
@@ -1593,6 +1601,7 @@ async function saveAndReloadSettings() {
                 show_airport_icons: $("show_airport_icons") ? $("show_airport_icons").checked : false,
                 show_ground_vehicles: $("show_ground_vehicles") ? $("show_ground_vehicles").checked : true,
                 map_style: $("map_style").value,
+                radar_style: $("radar_style") ? $("radar_style").value : "classic",
                 vfr_map_opacity: Number($("vfr_opacity") ? $("vfr_opacity").value : 45),
                 traffic_mode: $("traffic_mode").value,
                 vessel_min_speed_kt: Number($("vessel_min_speed") ? $("vessel_min_speed").value : 0),

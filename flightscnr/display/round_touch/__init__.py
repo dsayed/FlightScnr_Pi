@@ -9,6 +9,11 @@
 
 """Round touch display package."""
 
-from display.round_touch.app import RoundTouchDisplay
+def __getattr__(name):
+    if name == "RoundTouchDisplay":
+        from display.round_touch.app import RoundTouchDisplay
+
+        return RoundTouchDisplay
+    raise AttributeError(name)
 
 __all__ = ["RoundTouchDisplay"]

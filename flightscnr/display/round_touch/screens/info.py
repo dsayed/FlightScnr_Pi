@@ -99,6 +99,7 @@ HUD_ACTIONS = (
 )
 # Filter / map controls — kept short so rows fit the round viewport.
 OPTIONS_ACTIONS = (
+    "radar_style",
     "aircraft_tag",
     "favourite",
     "min_height",
@@ -175,6 +176,7 @@ LIST_PICKER_KINDS = frozenset(
         "aircraft_min_speed",
         "vessel_min_speed",
         "map_style",
+        "radar_style",
         "traffic",
         "quiet_start",
         "quiet_end",
@@ -196,6 +198,7 @@ _LIST_PICKER_TITLES = {
     "aircraft_min_speed": "Min aircraft speed",
     "vessel_min_speed": "Min vessel speed",
     "map_style": "Basemap",
+    "radar_style": "Radar style",
     "traffic": "Select traffic",
     "quiet_start": "Quiet start",
     "quiet_end": "Quiet end",
@@ -486,6 +489,12 @@ def _build_settings_picker_items(kind: str) -> list[dict]:
             settings.MAP_STYLES,
             settings.map_style(),
             lambda style: settings.MAP_STYLE_LABELS.get(style, str(style)),
+        )
+    if kind == "radar_style":
+        return _enum_picker_items(
+            settings.RADAR_STYLES,
+            settings.radar_style(),
+            lambda style: "STARS" if str(style) == "stars" else "Classic",
         )
     if kind == "traffic":
         return _enum_picker_items(
@@ -1845,6 +1854,7 @@ def _options_row_labels() -> list[str]:
 
     fav = favourite_locations.active_label()
     return [
+        f"Radar Style › {settings.radar_style_label()}",
         f"Traffic Labels › {settings.traffic_labels_label()}",
         f"Favorite Locations › {fav}",
         f"Min Aircraft Altitude › {settings.min_height_ft()} ft",

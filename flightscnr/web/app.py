@@ -1119,6 +1119,8 @@ def radar_json():
             "map_style": settings.map_style(),
             "map_style_options": list(settings.MAP_STYLES),
             "vfr_map_opacity": settings.vfr_map_opacity(),
+            "radar_style": settings.radar_style(),
+            "radar_style_options": list(settings.RADAR_STYLES),
             "dump1090": dump1090_portal_status(),
             "live_map_heading_up": settings.live_map_heading_up(),
         }
@@ -1257,6 +1259,8 @@ def radar_save():
             settings.set_vfr_map_opacity(int(data.get("vfr_map_opacity")))
         except (TypeError, ValueError):
             return jsonify({"ok": False, "message": "vfr_map_opacity must be a number"}), 400
+    if "radar_style" in data:
+        settings.set_radar_style(str(data.get("radar_style") or ""))
     if "traffic_mode" in data:
         settings.set_traffic_mode(str(data.get("traffic_mode") or ""))
     elif "ais_enabled" in data:

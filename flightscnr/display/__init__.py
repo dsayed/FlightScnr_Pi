@@ -9,6 +9,11 @@
 
 """Round touch display (1080×1080 FlightScnr UI)."""
 
-from display.round_touch.app import RoundTouchDisplay as Display
+def __getattr__(name):
+    if name == "Display":
+        from display.round_touch.app import RoundTouchDisplay
+
+        return RoundTouchDisplay
+    raise AttributeError(name)
 
 __all__ = ["Display"]
